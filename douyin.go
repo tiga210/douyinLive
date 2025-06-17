@@ -59,10 +59,21 @@ func NewDouyinLive(liveID string, logger logger) (*DouyinLive, error) {
 		headers:    make(http.Header),
 		logger:     logger,
 	}
-	if dl.IsLive() == false {
-		return nil, fmt.Errorf("直播间 %s 未开播", liveID)
-	}
 	return dl, nil
+}
+
+func NewDouyinLive2(roomId, pushId, liveName, ttwid string, logger logger) *DouyinLive {
+	return &DouyinLive{
+		roomID:     roomId,
+		pushID:     pushId,
+		LiveName:   liveName,
+		ttwid:      ttwid,
+		userAgent:  utils.RandomUserAgent(),
+		bufferPool: &sync.Pool{New: func() interface{} { return bytes.NewBuffer(make([]byte, 0, gzipBufferSize)) }},
+		logger:     logger,
+		headers:    make(http.Header),
+		isLiving:   true,
+	}
 }
 
 // Close 关闭抖音直播连接，确保资源正确释放
@@ -119,13 +130,6 @@ func (dl *DouyinLive) Close() {
 
 // initialize 初始化 DouyinLive 实例
 func (dl *DouyinLive) initialize() error {
-	if err := dl.fetchTTWID(); err != nil {
-		return err
-	}
-
-	if err := dl.fetchRoomInfo(); err != nil {
-		return err
-	}
 
 	if err := jsScript.LoadGoja(dl.userAgent); err != nil {
 		return fmt.Errorf("加载JavaScript脚本失败: %w", err)
@@ -205,12 +209,12 @@ func (dl *DouyinLive) IsLive() bool {
 
 	status := matches[2]
 	dl.setLiveStatus(status == "2")
-	return dl.isLiveClosed
+	return dl.isLiving
 }
 
 // setLiveStatus 设置直播间状态
 func (dl *DouyinLive) setLiveStatus(status bool) {
-	dl.isLiveClosed = status
+	dl.isLiving = status
 }
 
 // Start 启动直播间连接
@@ -219,6 +223,19 @@ func (dl *DouyinLive) Start() {
 
 	if !dl.IsLive() {
 		dl.logger.Println("直播间未开播或连接失败")
+		return
+	}
+	if err := dl.fetchTTWID(); err != nil {
+		dl.logger.Printf("初始化获取ttwid失败: %v\n", err)
+		return
+	}
+
+	if err := dl.fetchRoomInfo(); err != nil {
+		dl.logger.Printf("初始化获取rome_info失败: %v\n", err)
+		return
+	}
+	if err := dl.initialize(); err != nil {
+		dl.logger.Printf("初始化失败: %v\n", err)
 		return
 	}
 
@@ -230,14 +247,25 @@ func (dl *DouyinLive) Start() {
 	dl.processMessages()
 }
 
+func (dl *DouyinLive) Start2() error {
+	defer dl.cleanup()
+	if err := dl.initialize(); err != nil {
+		dl.logger.Printf("初始化失败: %v\n", err)
+		return err
+	}
+	if err := dl.startWebSocket(); err != nil {
+		dl.logger.Printf("WebSocket连接失败: %v\n", err)
+		return err
+	}
+	dl.processMessages()
+	return nil
+}
+
 // connectWebSocket 连接 WebSocket
 func (dl *DouyinLive) startWebSocket() error {
 	dialer := websocket.DefaultDialer
 	dialer.HandshakeTimeout = websocketConnectTimeout
-	url, err := dl.makeURL()
-	if err != nil {
-		return fmt.Errorf("构建WebSocket URL失败: %w", err)
-	}
+	url := dl.makeURL()
 	conn, resp, err := dialer.Dial(url, dl.headers)
 	if err != nil {
 		return fmt.Errorf("连接失败 (状态码: %d): %w", resp.StatusCode, err)
@@ -248,10 +276,7 @@ func (dl *DouyinLive) startWebSocket() error {
 }
 
 // makeURL 构建 WebSocket URL
-func (dl *DouyinLive) makeURL() (string, error) {
-	if err := dl.initialize(); err != nil {
-		return "", fmt.Errorf("初始化失败: %w", err)
-	}
+func (dl *DouyinLive) makeURL() string {
 	fetchTime := time.Now().UnixNano() / int64(time.Millisecond)
 	browserInfo := strings.SplitN(dl.userAgent, "Mozilla", 2)[1]
 	parsedBrowser := strings.ReplaceAll(browserInfo, " ", "%20")
@@ -270,21 +295,15 @@ func (dl *DouyinLive) makeURL() (string, error) {
 		dl.pushID,
 		dl.roomID,
 		signature,
-	), nil
+	)
 }
 
 // processMessages 处理消息
 func (dl *DouyinLive) processMessages() {
-	var (
-		pushFrame = &new_douyin.Webcast_Im_PushFrame{}
-		response  = &new_douyin.Webcast_Im_Response{}
+	var pushFrame new_douyin.Webcast_Im_PushFrame
 
-		controlMsg = &douyin.ControlMessage{}
-	)
-
-	for dl.isLiveClosed {
+	for dl.isLiving {
 		messageType, data, err := dl.conn.ReadMessage()
-		//log.Printf("读取消息类型: %d, 数据长度: %d, err:%v\n", messageType, len(data), err)
 		if err != nil {
 			dl.logger.Printf("读取消息失败:%v\n", err)
 			if !dl.handleReadError(err) {
@@ -297,13 +316,13 @@ func (dl *DouyinLive) processMessages() {
 			continue
 		}
 
-		if err := proto.Unmarshal(data, pushFrame); err != nil {
+		if err := proto.Unmarshal(data, &pushFrame); err != nil {
 			dl.logger.Printf("解析PushFrame失败: %v\n", err)
 			continue
 		}
 
 		if pushFrame.PayloadType == "msg" && utils.HasGzipEncoding(pushFrame.Headers) {
-			dl.handleGzipMessage(pushFrame, response, controlMsg)
+			dl.handleGzipMessage(&pushFrame)
 		}
 	}
 }
@@ -317,15 +336,15 @@ func (dl *DouyinLive) readMessage() (int, []byte, error) {
 }
 
 // handleGzipMessage 处理 GZIP 消息
-func (dl *DouyinLive) handleGzipMessage(pushFrame *new_douyin.Webcast_Im_PushFrame, response *new_douyin.Webcast_Im_Response, controlMsg *douyin.ControlMessage) {
-
+func (dl *DouyinLive) handleGzipMessage(pushFrame *new_douyin.Webcast_Im_PushFrame) {
 	uncompressed, err := dl.decompressGzip(pushFrame.Payload)
 	if err != nil {
 		dl.logger.Printf("GZIP解压失败: %v\n", err)
 		return
 	}
 
-	if err := proto.Unmarshal(uncompressed, response); err != nil {
+	var response new_douyin.Webcast_Im_Response
+	if err := proto.Unmarshal(uncompressed, &response); err != nil {
 		dl.logger.Printf("解析Response失败: %v\n", err)
 		return
 	}
@@ -335,7 +354,7 @@ func (dl *DouyinLive) handleGzipMessage(pushFrame *new_douyin.Webcast_Im_PushFra
 	}
 
 	for _, msg := range response.Messages {
-		dl.handleSingleMessage(msg, controlMsg)
+		dl.handleSingleMessage(msg)
 	}
 }
 
@@ -384,12 +403,12 @@ func (dl *DouyinLive) sendAck(logID uint64, internalExt string) {
 }
 
 // handleSingleMessage 处理单条消息
-func (dl *DouyinLive) handleSingleMessage(msg *new_douyin.Webcast_Im_Message,
-	controlMsg *douyin.ControlMessage) {
+func (dl *DouyinLive) handleSingleMessage(msg *new_douyin.Webcast_Im_Message) {
 	dl.emitEvent(msg)
 
 	if msg.Method == "WebcastControlMessage" {
-		if err := proto.Unmarshal(msg.Payload, controlMsg); err != nil {
+		var controlMsg douyin.ControlMessage
+		if err := proto.Unmarshal(msg.Payload, &controlMsg); err != nil {
 			dl.logger.Printf("解析控制消息失败: %v\n", err)
 			return
 		}
@@ -451,10 +470,7 @@ func (dl *DouyinLive) reconnect(attempts int) bool {
 	}
 
 	retryable := func() error {
-		url, err := dl.makeURL()
-		if err != nil {
-			return fmt.Errorf("构建WebSocket URL失败: %w", err)
-		}
+		url := dl.makeURL()
 		conn, _, err := websocket.DefaultDialer.Dial(url, dl.headers)
 		if err != nil {
 			// 处理不可恢复错误

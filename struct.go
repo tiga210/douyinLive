@@ -39,7 +39,7 @@ type DouyinLive struct {
 	eventHandlers []EventHandler
 	headers       http.Header
 	bufferPool    *sync.Pool
-	isLiveClosed  bool
+	isLiving      bool
 	LiveName      string
 	logger        logger // 添加日志接口字段
 	manualClose   bool   // 新增字段：标记是否手动关闭

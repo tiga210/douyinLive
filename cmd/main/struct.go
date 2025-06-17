@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/jwwsjlm/douyinLive"
 	"github.com/lxzan/gws"
+	"github.com/tiga210/douyinLive"
 )
 
 // WsHandler 实现 gws 的 Event 接口，添加房间ID信息

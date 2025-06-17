@@ -1,9 +1,9 @@
 package main
 
 import (
-	"github.com/jwwsjlm/douyinLive"
-	"github.com/jwwsjlm/douyinLive/generated/new_douyin"
 	"github.com/lxzan/gws"
+	"github.com/tiga210/douyinLive"
+	"github.com/tiga210/douyinLive/generated/new_douyin"
 	"log"
 )
 

@@ -5,7 +5,7 @@ import (
 	"compress/gzip"
 	"io"
 
-	"github.com/jwwsjlm/douyinLive"
+	"github.com/tiga210/douyinLive"
 
 	"testing"
 )

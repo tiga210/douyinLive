@@ -18,10 +18,10 @@ import (
 	"github.com/imroc/req/v3"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/jwwsjlm/douyinLive/generated/douyin"
-	"github.com/jwwsjlm/douyinLive/generated/new_douyin"
-	"github.com/jwwsjlm/douyinLive/jsScript"
-	"github.com/jwwsjlm/douyinLive/utils"
+	"github.com/tiga210/douyinLive/generated/douyin"
+	"github.com/tiga210/douyinLive/generated/new_douyin"
+	"github.com/tiga210/douyinLive/jsScript"
+	"github.com/tiga210/douyinLive/utils"
 )
 
 const (

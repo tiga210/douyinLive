@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"github.com/elliotchance/orderedmap"
 	"github.com/google/uuid"
-	"github.com/jwwsjlm/douyinLive/generated/new_douyin"
+	"github.com/tiga210/douyinLive/generated/new_douyin"
 	"math/rand"
 	"strconv"
 	"strings"
